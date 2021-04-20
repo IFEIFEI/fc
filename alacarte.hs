@@ -65,11 +65,24 @@ clear = inject (Clear (return ()))
 
 type MemOp =  Incr :+: Recall :+: Clear
 
+
+-- op = incr i op | recall (t -> op) | clear op
+-- memop :: Parser (Free MemOp a)
+-- memop = do {string "clear"; return clear }
+--         +++ do { string "recall"; return recall }
+--         +++ do { _ <- string "incr"; x <- number; return $ incr x}
+--
+-- number :: Parser Int
+-- number = do { ns <- many1 digit1; return $ foldl (\x y-> x*10 + y) 0 ns}
+-- digit1 = do { x <- token (sat isDigit); return $  (ord x - ord '0')}
+
+
 tick :: Free MemOp Int     -- Pure () | Incr 1 (Free Incr ()) :: Free Incr ()
 tick = do
         y <- recall
-        incr 1
         clear
+        incr 1
+        incr 1
         return y
 
 -- peekNum :: Free MemOp Int
@@ -157,16 +170,16 @@ instance {-# OVERLAPs #-} Pairing' HTrue Identity Identity where
 instance {-# OVERLAPs #-} Pairing' HTrue ((->) a) ((,) a) where
     pair' _ p f = trace "Pairing ((->) a) ((,) a)" uncurry (p . f)
 instance {-# OVERLAPs #-} Pairing' HTrue ((,) a) ((->) a) where
-    pair' _ p f g =  trace " Pairing ((->) a) ((,) a)" pair (flip p) g f
+    pair' _ p f g =  trace " Pairing ((,) a) ((->) a)" pair (flip p) g f
 instance {-# OVERLAPs #-} Pairing f g => Pairing' HTrue (Cofree f) (Free g) where
     pair' _ p (a :< _ ) (Pure x)  = trace "CF PURE" p a x
     pair' _ p (_ :< fs) (Free gs) = trace "CF FREE" pair (pair p) fs gs
 instance {-# OVERLAPs #-} (Pairing g f, Pairing g h) => Pairing' HTrue g (f :+: h) where
     pair' _ p g (L1 f) = trace "Pairing g ([f] :+: g)" $ pair p g f
     pair' _ p g (R1 h) = trace "Pairing g (f :+: [g])" $ pair p g h
-instance {-# OVERLAPs #-} (Functor h, Or (PairPred f g) (PairPred h g) ~ HLTrue, Pairing f g) => Pairing' HLTrue (f :*: h) g where
+instance {-# OVERLAPs #-} (Functor h, Or (CastHTrue (PairPred f g)) (PairPred h g) ~ HLTrue, Pairing f g) => Pairing' HLTrue (f :*: h) g where
     pair' _ p (f :*: h) g = trace "Pairing ([f] :*: h) g" $ pair p f g
-instance {-# OVERLAPs #-} (Functor f, Or (PairPred f g) (PairPred h g) ~ HRTrue, Pairing h g) => Pairing' HRTrue (f :*: h) g where
+instance {-# OVERLAPs #-} (Functor f, Or (PairPred f g) (CastHTrue (PairPred h g)) ~ HRTrue, Pairing h g) => Pairing' HRTrue (f :*: h) g where
     pair' _ p (f :*: h) g = trace "Pairing (f :*: [h]) g" $ pair p h g
 
 -- class (Functor f, Functor g) => Pairing f g where
