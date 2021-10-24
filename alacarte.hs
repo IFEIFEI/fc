@@ -79,7 +79,6 @@ recall = inject (Recall return)
 clear :: (Clear :<: f) => Free f ()
 clear = inject (Clear (return ()))
 
-
 -- newtype StateMem a = StateMem (Mem -> (a, Mem)) deriving (Functor)
 -- data MS f t = MS (Int -> Free f (Int -> MS f t))
 -- type FreeMS f t = Free f (MS f Int)
@@ -117,7 +116,6 @@ instance (Show t) => Show (EndExpr t) where
 --     show (L1 f) = show f
 --     show (R1 g) = show g
 
-
 data Expr f = In (f (Expr f))
 instance Show (Expr CompExpr) where
     show (In t) = show t
@@ -147,7 +145,7 @@ foldExpr :: Functor f => (f a -> a) -> Expr f -> a
 foldExpr f (In t) = f (fmap (foldExpr f ) t)
 
 class Functor f => Run f where
-    runAlgebra :: (Run f0) => f (Expr f0) ->  Free MemOp (Either () Int)
+    runAlgebra :: (Run f0) => f (Expr f0) ->  Free NewMemOp (Either () Int)                     -- 额外增加部分
 instance Run IncrExpr where
     runAlgebra (IncrExpr i (In t)) = do { incr i; runAlgebra t}
     -- runAlgebra (IncrExpr i (In t)) = trace "incr_expr" $ do { incr i; runAlgebra t}
@@ -180,8 +178,8 @@ whileM :: (Monoid a, Monad m) => m Bool -> m a -> m a
 whileM act m = do {b <- act; whenM b m}
 
 
-tick :: Free MemOp Int     -- Pure () | Incr 1 (Free Incr ()) :: Free Incr ()
-tick = do
+ticki :: Free MemOp Int     -- Pure () | Incr 1 (Free Incr ()) :: Free Incr ()
+ticki = do
         y <- recall
         clear
         incr 1
@@ -204,11 +202,6 @@ tickv = do
         incr 2
 -- peekNum :: Free MemOp Int
 -- peekNum = do {y <- recall; return y}
-
-
-newtype CoIncr a = CoIncr (Int -> a) deriving (Functor)
-newtype CoRecall a = CoRecall (Int, a) deriving (Functor)
-newtype CoClear a = CoClear a deriving (Functor)
 
 -- infixr 6 :@:
 -- data (f :: k -> Type) (:@:)  (g :: k -> Type) a = f a :@: a
@@ -264,6 +257,7 @@ type family PairPred (f :: * -> *) (g :: * -> *) :: * where
     PairPred CoIncr Incr = HTrue
     PairPred CoRecall Recall = HTrue
     PairPred CoClear Clear = HTrue
+    PairPred CoTick Tick = HTrue
     PairPred f g = HFalse
 
 class (Functor f, Functor g) => Pairing f g where
@@ -311,6 +305,40 @@ instance {-# OVERLAPs #-} Pairing' HTrue CoRecall Recall where
 instance {-# OVERLAPs #-} Pairing' HTrue CoClear Clear where
     pair' _ f (CoClear a) (Clear b) = f a b
 
+-- Add a new tick syntatic
+data Tick t = Tick t
+deriving instance Functor Tick
+type NewMemOp =  Tick :+: MemOp
+tick :: (Tick :<: f) => Free f ()
+tick = inject $ Tick $ return ()
+data TickExpr e = TickExpr e
+deriving instance Functor TickExpr
+type NewCompExpr = TickExpr :+: CompExpr -- EndExpr :+: IncrExpr :+: RecallExpr :+: ClearExpr :+:
+tickExpr :: (TickExpr :<: f) => Expr f -> Expr f
+tickExpr e  = injectExpr $ TickExpr e
+instance Run TickExpr where
+    runAlgebra (TickExpr (In t)) = do { tick; runAlgebra t }
+new_memop :: Parser (Expr (NewCompExpr))
+new_memop = do { symb "clear"; symb ";"; t <- new_memop; return $ clearExpr t } +++
+            do { symb "recall"; symb ";"; t <- new_memop; return $ recallExpr t } +++
+            do { symb "incr"; x <- number; symb ";"; t <- new_memop; return $ incrExpr x t } +++
+            do { symb "end"; return $ endExpr } +++
+            do { symb "tick"; symb ";"; t <- new_memop; return $ tickExpr t }
+newtype CoTick a = CoTick a deriving (Functor)
+type NewCoMemIntp = CoTick :*: CoMemIntp
+newtype CoIncr a = CoIncr (Int -> a) deriving (Functor)
+newtype CoRecall a = CoRecall (Int, a) deriving (Functor)
+newtype CoClear a = CoClear a deriving (Functor)
+coTick :: Mem -> Mem
+coTick m = mapMem (\t -> t + 1) m
+new_interpretMem :: Mem -> Cofree NewCoMemIntp Mem
+new_interpretMem mem = coiter next start
+                    where
+                        next s = (CoTick $ coTick s) :*: (CoIncr $ coIncr s) :*: (CoRecall $ coRecall s) :*: (CoClear $ coClear s)
+                        start = mem
+instance {-# OVERLAPs #-} Pairing' HTrue CoTick Tick where
+    pair' _ f (CoTick a) (Tick b) = f a b
+
 -- foldTerm :: Functor f => (a -> b) -> (f b -> b) -> Free f a -> b
 -- foldTerm pur imp (Pure x) = pur x
 -- foldTerm pur imp (Free t) = imp (fmap (foldTerm pur imp) t)
@@ -345,10 +373,10 @@ rInt = Identity 3
 t = Incr 1 1
 
 -- get the memory value
-m = pair const (interpretMem s) tick
+m = pair const (interpretMem s) ticki
 mzv = pair const (interpretMem s) tickz
 -- get the recall value
-r = pair (flip const) (interpretMem s) tick
+r = pair (flip const) (interpretMem s) ticki
 mzr = pair (flip const) (interpretMem s) tickz
 
 mvv = pair const (interpretMem s) tickv
@@ -362,8 +390,25 @@ re x = case x of
         Pure _ -> "Pure"
         Free _ -> "Free"
 
+-- tickt test
+tickt :: Free NewMemOp Int
+tickt = do
+        clear
+        incr 1
+        incr 2
+        tick
+        v <- recall
+        tick
+        return v
 
-
+input1 :: String
+input1 = "recall; incr 1; clear; incr 1; incr 1; tick; tick; recall; end"
+exprt = fst $ (parse new_memop input1)!!0
+expr1 :: NewCompExpr (Expr NewCompExpr)
+expr1 = let In t = exprt in t
+te = runAlgebra expr1
+rt = pair (flip const) (new_interpretMem s) te
+mvt = pair const (new_interpretMem s) te
 
 
 
