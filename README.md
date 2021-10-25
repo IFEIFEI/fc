@@ -15,5 +15,5 @@ TypeLogic.hs
 Example1.hs  
 算术运算表达式（PEG）示例
 
-\color {blue}{Example2.hs}  
+$\color {blue}{Example2.hs}$  
 内存模型示例，含有一个完整的构建模型示例
